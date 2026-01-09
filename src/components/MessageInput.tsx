@@ -109,6 +109,7 @@ export const MessageInput = ({
 
     await onSendMessage(message, {
       model,
+      provider,
       tools: [],
       approveAllTools: approveAllTools,
       attachments: attachments.length > 0 ? attachments : undefined,
