@@ -70,6 +70,7 @@ export const ModelConfiguration = ({
           >
             <option value="google">Google</option>
             <option value="openai">OpenAI</option>
+            <option value="deepseek">DeepSeek</option>
           </select>
         </div>
       </div>

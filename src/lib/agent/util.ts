@@ -3,7 +3,7 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 export interface CreateChatModelOptions {
-  provider?: string; // 'openai' | 'google' | others later
+  provider?: string; // 'openai' | 'google' | 'deepseek' | others later
   model: string;
   temperature?: number;
 }
@@ -19,6 +19,15 @@ export function createChatModel({
   switch (provider) {
     case "openai":
       return new ChatOpenAI({ model, temperature });
+    case "deepseek":
+      return new ChatOpenAI({
+        model,
+        temperature,
+        configuration: {
+          baseURL: "https://api.deepseek.com/v1",
+          apiKey: process.env.DEEPSEEK_API_KEY,
+        },
+      });
     case "google":
     default:
       return new ChatGoogleGenerativeAI({ model, temperature });
