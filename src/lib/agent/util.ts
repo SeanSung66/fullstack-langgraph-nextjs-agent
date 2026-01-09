@@ -43,3 +43,10 @@ export interface AgentConfigOptions {
 
 export const DEFAULT_MODEL_PROVIDER = "google";
 export const DEFAULT_MODEL_NAME = "gemini-3-flash-preview";
+
+// Default models for each provider
+export const DEFAULT_MODELS: Record<string, string> = {
+  google: "gemini-3-flash-preview",
+  openai: "gpt-4o-mini",
+  deepseek: "deepseek-chat",
+};

@@ -3,6 +3,7 @@ import { BrainCog, Loader2, Wrench } from "lucide-react";
 import Image from "next/image";
 import { useMCPTools } from "@/hooks/useMCPTools";
 import { MCPToolsTooltip } from "./MCPToolsTooltip";
+import { DEFAULT_MODELS } from "@/lib/agent/util";
 
 interface ModelConfigurationProps {
   provider: string;
@@ -25,6 +26,12 @@ export const ModelConfiguration = ({
 
   // Fetch MCP tools data
   const { data: mcpToolsData, isLoading: mcpToolsLoading } = useMCPTools();
+
+  // Handle provider change - update model to default for that provider
+  const handleProviderChange = (newProvider: string) => {
+    setProvider(newProvider);
+    setModel(DEFAULT_MODELS[newProvider] || "");
+  };
 
   // Hide MCP tooltip when clicking outside
   useEffect(() => {
@@ -65,7 +72,7 @@ export const ModelConfiguration = ({
           </span>
           <select
             value={provider}
-            onChange={(e) => setProvider(e.target.value)}
+            onChange={(e) => handleProviderChange(e.target.value)}
             className="flex-1 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
           >
             <option value="google">Google</option>
