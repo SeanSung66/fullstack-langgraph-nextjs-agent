@@ -1,15 +1,25 @@
 import { ensureAgent } from "@/lib/agent";
 import { ensureThread } from "@/lib/thread";
-import type { MessageOptions, MessageResponse, ToolCall } from "@/types/message";
-import prisma from "@/lib/database/prisma";
-import { getHistory } from "@/lib/agent/memory";
-import { BaseMessage, HumanMessage } from "@langchain/core/messages";
+import type { MessageOptions, ToolCall } from "@/types/message";
+import { HumanMessage } from "@langchain/core/messages";
 import { Command } from "@langchain/langgraph";
 import { processAttachmentsForAI } from "@/lib/storage/content";
 
 /**
- * Returns an async iterable producing incremental AI text chunks for a user text input.
- * Thread is ensured before streaming. The consumer (route) can package into SSE or any protocol.
+ * Token-level streaming chunk type
+ */
+export interface StreamChunk {
+  type: "token" | "tool_call" | "tool_result" | "done" | "error";
+  content?: string;
+  toolCall?: ToolCall;
+  toolResult?: { name: string; content: string };
+  error?: string;
+  messageId?: string;
+}
+
+/**
+ * Returns an async iterable producing incremental token chunks for streaming.
+ * Thread is ensured before streaming.
  */
 export async function streamResponse(params: {
   threadId: string;
@@ -35,27 +45,22 @@ export async function streamResponse(params: {
       approveAllTools: opts?.approveAllTools,
     });
 
-    // Type assertion needed for Command union with state update in v1
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const iterable = await agent.stream(inputs as any, {
-      streamMode: ["updates"],
+      streamMode: ["messages"],
       configurable: { thread_id: threadId },
     });
 
-    return generator(iterable);
+    return tokenGenerator(iterable);
   }
 
   // Build multimodal message with attachments
   let messageContent: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
 
   if (opts?.attachments && opts.attachments.length > 0) {
-    // Process attachments and build content array
     const attachmentContents = await processAttachmentsForAI(opts.attachments);
-
-    // Combine user text with attachment contents
     messageContent = [{ type: "text", text: userText }, ...attachmentContents];
   } else {
-    // Simple text message
     messageContent = userText;
   }
 
@@ -70,119 +75,114 @@ export async function streamResponse(params: {
     approveAllTools: opts?.approveAllTools,
   });
 
-  // Type assertion needed for Command union with state update in v1
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const iterable = await agent.stream(inputs as any, {
-    streamMode: ["updates"],
+    streamMode: ["messages"],
     configurable: { thread_id: threadId },
   });
 
-  return generator(iterable);
+  return tokenGenerator(iterable);
 }
 
-// Helper generator function to process stream chunks
-async function* generator(
+
+/**
+ * Token-level generator for streaming responses.
+ * Handles LangGraph's ["messages", [AIMessageChunk/ToolMessage, metadata]] format.
+ *
+ * @param iterable - The async iterable from LangGraph agent.stream()
+ * @yields StreamChunk objects for each token, tool call, or tool result
+ */
+async function* tokenGenerator(
   iterable: AsyncIterable<unknown>,
-): AsyncGenerator<MessageResponse, void, unknown> {
+): AsyncGenerator<StreamChunk, void, unknown> {
   for await (const chunk of iterable) {
     if (!chunk) continue;
 
-    // Handle tuple format: [type, data]
+    // Handle messages mode: ["messages", [message, metadata]]
     if (Array.isArray(chunk) && chunk.length === 2) {
       const [chunkType, chunkData] = chunk;
 
-      if (
-        chunkType === "updates" &&
-        chunkData &&
-        typeof chunkData === "object" &&
-        !Array.isArray(chunkData)
-      ) {
-        // Handle updates: ['updates', { agent: { messages: [Array] } }]
-        if (
-          "agent" in chunkData &&
-          chunkData.agent &&
-          typeof chunkData.agent === "object" &&
-          !Array.isArray(chunkData.agent) &&
-          "messages" in chunkData.agent
-        ) {
-          const messages = Array.isArray(chunkData.agent.messages)
-            ? chunkData.agent.messages
-            : [chunkData.agent.messages];
-          for (const message of messages) {
-            if (!message) continue;
+      if (chunkType === "messages" && Array.isArray(chunkData) && chunkData.length >= 1) {
+        const message = chunkData[0];
+        if (!message) continue;
 
-            const isAIMessage =
-              message?.constructor?.name === "AIMessageChunk" ||
-              message?.constructor?.name === "AIMessage";
+        // Get constructor name to identify message type
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const constructorName = (message as any)?.constructor?.name;
 
-            if (!isAIMessage) continue;
+        // Handle AIMessageChunk (streaming tokens from LLM)
+        if (constructorName === "AIMessageChunk") {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const aiMessage = message as any;
+          const content = aiMessage.content;
 
-            const messageWithTools = message as Record<string, unknown>;
-            const processedMessage = processAIMessage(messageWithTools);
-            if (processedMessage) {
-              yield processedMessage;
+          // Extract text content - can be string or array of content items
+          if (typeof content === "string" && content) {
+            yield { type: "token", content, messageId: aiMessage.id };
+          } else if (Array.isArray(content)) {
+            for (const item of content) {
+              if (typeof item === "string" && item) {
+                yield { type: "token", content: item, messageId: aiMessage.id };
+              } else if (item && typeof item === "object") {
+                // Handle text content item
+                if ("text" in item && item.text) {
+                  yield { type: "token", content: item.text as string, messageId: aiMessage.id };
+                }
+                // Handle function call (tool call) in content
+                if ("functionCall" in item && item.functionCall) {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const fc = item.functionCall as any;
+                  yield {
+                    type: "tool_call",
+                    toolCall: {
+                      name: fc.name,
+                      args: fc.args,
+                      id: aiMessage.id || Date.now().toString(),
+                      type: "tool_call",
+                    },
+                    messageId: aiMessage.id,
+                  };
+                }
+              }
             }
           }
+
+          // Handle tool_calls array (standard LangChain format)
+          if (
+            aiMessage.tool_calls &&
+            Array.isArray(aiMessage.tool_calls) &&
+            aiMessage.tool_calls.length > 0
+          ) {
+            for (const toolCall of aiMessage.tool_calls) {
+              yield {
+                type: "tool_call",
+                toolCall: toolCall as ToolCall,
+                messageId: aiMessage.id,
+              };
+            }
+          }
+        }
+
+        // Handle ToolMessage (tool execution results)
+        if (constructorName === "ToolMessage") {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const toolMessage = message as any;
+          yield {
+            type: "tool_result",
+            toolResult: {
+              name: toolMessage.name || "unknown",
+              content:
+                typeof toolMessage.content === "string"
+                  ? toolMessage.content
+                  : JSON.stringify(toolMessage.content),
+            },
+            messageId: toolMessage.id,
+          };
         }
       }
     }
   }
 }
 
-// Helper function to process any AI message and return the appropriate MessageResponse
-function processAIMessage(message: Record<string, unknown>): MessageResponse | null {
-  // Check if this is a tool call (content is array with functionCall)
-  const hasToolCall =
-    Array.isArray(message.content) &&
-    message.content.some(
-      (item: unknown) => item && typeof item === "object" && "functionCall" in item,
-    );
-
-  if (hasToolCall) {
-    // Return full AIMessageData for tool calls to preserve all information
-    return {
-      type: "ai",
-      data: {
-        id: (message.id as string) || Date.now().toString(),
-        content: typeof message.content === "string" ? message.content : "",
-        tool_calls: (message.tool_calls as ToolCall[]) || undefined,
-        additional_kwargs: (message.additional_kwargs as Record<string, unknown>) || undefined,
-        response_metadata: (message.response_metadata as Record<string, unknown>) || undefined,
-      },
-    };
-  } else {
-    // Handle regular text content - extract text from various content types
-    let text = "";
-    if (typeof message.content === "string") {
-      text = message.content;
-    } else if (Array.isArray(message.content)) {
-      text = message.content
-        .map((c: string | { text?: string }) => (typeof c === "string" ? c : c?.text || ""))
-        .join("");
-    } else {
-      text = String(message.content ?? "");
-    }
-
-    // Only return message if we have actual text content
-    if (text.trim()) {
-      return {
-        type: "ai",
-        data: { id: (message.id as string) || Date.now().toString(), content: text },
-      };
-    }
-  }
-  return null;
-}
-
-/** Fetch prior messages for a thread from the LangGraph checkpoint/memory system. */
-export async function fetchThreadHistory(threadId: string): Promise<MessageResponse[]> {
-  const thread = await prisma.thread.findUnique({ where: { id: threadId } });
-  if (!thread) return [];
-  try {
-    const history = await getHistory(threadId);
-    return history.map((msg: BaseMessage) => msg.toDict() as MessageResponse);
-  } catch (e) {
-    console.error("fetchThreadHistory error", e);
-    return [];
-  }
-}
+// Export tokenGenerator for testing purposes
+export { tokenGenerator };

@@ -1,15 +1,27 @@
 import { NextRequest } from "next/server";
-import { streamResponse } from "@/services/agentService";
-import type { MessageResponse, FileAttachment } from "@/types/message";
+import { streamResponse, StreamChunk } from "@/services/agentService";
+import type { FileAttachment } from "@/types/message";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * SSE endpoint that streams incremental AI response chunks produced by the LangGraph React agent.
+ * SSE endpoint that streams token-level AI response chunks produced by the LangGraph React agent.
+ * 
  * Query params:
  *  - content: user message text
- *  - threadId: (currently unused for history; placeholder for future multi-turn support)
+ *  - threadId: conversation thread ID
+ *  - model: (optional) model name
+ *  - provider: (optional) model provider
+ *  - tools: (optional) comma-separated list of enabled tools
+ *  - allowTool: (optional) "allow" or "deny" for tool approval
+ *  - approveAllTools: (optional) "true" to auto-approve all tools
+ *  - attachments: (optional) JSON array of file attachments
+ * 
+ * SSE Events:
+ *  - data: StreamChunk objects (token, tool_call, tool_result, done, error)
+ *  - event: done - signals stream completion
+ *  - event: error - signals an error occurred
  */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -44,7 +56,8 @@ export async function GET(req: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (data: MessageResponse) => {
+      // Send function for StreamChunk objects
+      const send = (data: StreamChunk) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       };
 
@@ -66,18 +79,23 @@ export async function GET(req: NextRequest) {
               attachments,
             },
           });
+
+          // Forward all StreamChunk objects from tokenGenerator
           for await (const chunk of iterable) {
-            // Only forward AI/tool chunks; ignore human/system
-            if (chunk.type === "ai" || chunk.type === "tool") {
-              send(chunk);
-            }
+            send(chunk);
           }
 
-          // Signal completion
+          // Signal completion with done chunk and SSE event
+          send({ type: "done" });
           controller.enqueue(encoder.encode("event: done\n"));
           controller.enqueue(encoder.encode("data: {}\n\n"));
         } catch (err: unknown) {
-          // Emit an error event (client onerror will capture general network; providing data for diagnostics)
+          // Send error chunk
+          send({
+            type: "error",
+            error: (err as Error)?.message || "Stream error",
+          });
+          // Emit an error event
           controller.enqueue(encoder.encode("event: error\n"));
           controller.enqueue(
             encoder.encode(

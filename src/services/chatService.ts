@@ -36,11 +36,19 @@ export async function fetchMessageHistory(threadId: string): Promise<MessageResp
   return data as MessageResponse[];
 }
 
+/**
+ * @deprecated Use fetch + ReadableStream in useChatThread hook instead.
+ * This function uses EventSource which doesn't support token-level streaming.
+ * Kept for backward compatibility but will be removed in future versions.
+ */
 export function createMessageStream(
   threadId: string,
   message: string,
   opts?: MessageOptions,
 ): EventSource {
+  console.warn(
+    "createMessageStream is deprecated. Use fetch + ReadableStream for token-level streaming.",
+  );
   const params = new URLSearchParams({ content: message, threadId });
   if (opts?.model) params.set("model", opts.model);
   if (opts?.provider) params.set("provider", opts.provider);
