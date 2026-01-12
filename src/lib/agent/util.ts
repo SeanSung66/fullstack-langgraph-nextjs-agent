@@ -41,8 +41,8 @@ export interface AgentConfigOptions {
   approveAllTools?: boolean; // if true, skip tool approval prompts
 }
 
-export const DEFAULT_MODEL_PROVIDER = "google";
-export const DEFAULT_MODEL_NAME = "gemini-3-flash-preview";
+export const DEFAULT_MODEL_PROVIDER = "deepseek";
+export const DEFAULT_MODEL_NAME = "deepseek-chat";
 
 // Default models for each provider
 export const DEFAULT_MODELS: Record<string, string> = {
