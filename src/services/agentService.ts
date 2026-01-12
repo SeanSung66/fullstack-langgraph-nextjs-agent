@@ -1,5 +1,6 @@
 import { ensureAgent } from "@/lib/agent";
 import { ensureThread } from "@/lib/thread";
+import { getHistory } from "@/lib/agent/memory";
 import type { MessageOptions, ToolCall } from "@/types/message";
 import { HumanMessage } from "@langchain/core/messages";
 import { Command } from "@langchain/langgraph";
@@ -186,3 +187,44 @@ async function* tokenGenerator(
 
 // Export tokenGenerator for testing purposes
 export { tokenGenerator };
+
+/**
+ * Fetches the message history for a specific thread.
+ * @param threadId - The ID of the thread to retrieve history for.
+ * @returns An array of MessageResponse objects for the API response.
+ */
+export async function fetchThreadHistory(threadId: string) {
+  const messages = await getHistory(threadId);
+  return messages.map((msg) => {
+    const msgType = msg._getType();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const msgAny = msg as any;
+
+    // Map LangChain message types to our MessageResponse types
+    let type: "human" | "ai" | "tool" | "error";
+    if (msgType === "human") {
+      type = "human";
+    } else if (msgType === "ai") {
+      type = "ai";
+    } else if (msgType === "tool") {
+      type = "tool";
+    } else {
+      type = "error";
+    }
+
+    return {
+      type,
+      data: {
+        id: msg.id || crypto.randomUUID(),
+        content: msg.content,
+        ...(msgAny.tool_calls ? { tool_calls: msgAny.tool_calls } : {}),
+        ...(msgAny.tool_call_id ? { tool_call_id: msgAny.tool_call_id } : {}),
+        ...(msgAny.name ? { name: msgAny.name } : {}),
+        ...(msgAny.status ? { status: msgAny.status } : {}),
+        ...(msg.additional_kwargs && Object.keys(msg.additional_kwargs).length > 0
+          ? { additional_kwargs: msg.additional_kwargs }
+          : {}),
+      },
+    };
+  });
+}
