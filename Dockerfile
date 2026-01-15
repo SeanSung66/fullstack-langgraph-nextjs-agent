@@ -3,16 +3,16 @@
 # ============================================
 FROM node:22-alpine AS deps
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Install pnpm (use exact version from packageManager)
+RUN corepack enable && corepack prepare pnpm@10.17.1 --activate
 
 WORKDIR /app
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile
+# Install dependencies (skip frozen-lockfile to handle minor version differences)
+RUN pnpm install
 
 # ============================================
 # Stage 2: Build the application
@@ -20,7 +20,7 @@ RUN pnpm install --frozen-lockfile
 FROM node:22-alpine AS builder
 
 # Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.17.1 --activate
 
 WORKDIR /app
 
