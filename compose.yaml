@@ -1,14 +1,53 @@
 services:
+  # Next.js Application (Frontend + API)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-mydb}?schema=public
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - S3_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-uploads}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_FORCE_PATH_STYLE=true
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - NEXT_PUBLIC_API_BASE_URL=/api/agent
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # PostgreSQL Database
   db:
     image: postgres:17-alpine
+    container_name: db
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: mydb
-    ports:
-      - "5434:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-mydb}
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-mydb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - app-network
+
 
   # MinIO S3-compatible object storage for file uploads
   minio:
@@ -16,11 +55,8 @@ services:
     container_name: minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000" # S3 API
-      - "9001:9001" # MinIO Console (Web UI)
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - minio_data:/data
     healthcheck:
@@ -28,6 +64,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    networks:
+      - app-network
 
   # Automatically create default buckets on startup
   createbuckets:
@@ -38,12 +77,18 @@ services:
     restart: on-failure
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc alias set localminio http://minio:9000 minioadmin minioadmin;
-      /usr/bin/mc mb localminio/uploads --ignore-existing;
-      /usr/bin/mc anonymous set download localminio/uploads;
+      /usr/bin/mc alias set localminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      /usr/bin/mc mb localminio/${S3_BUCKET_NAME:-uploads} --ignore-existing;
+      /usr/bin/mc anonymous set download localminio/${S3_BUCKET_NAME:-uploads};
       exit 0;
       "
+    networks:
+      - app-network
 
 volumes:
   db_data:
   minio_data:
+
+networks:
+  app-network:
+    driver: bridge

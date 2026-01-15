@@ -1,0 +1,55 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+.next
+out
+dist
+build
+
+# Git
+.git
+.gitignore
+
+# IDE and editors
+.vscode
+.idea
+*.swp
+*.swo
+
+# Environment files (use Docker environment variables instead)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testing
+coverage
+.nyc_output
+
+# Documentation and specs
+docs
+specs
+*.md
+!README.md
+
+# Docker files (avoid recursive copy)
+Dockerfile*
+docker-compose*
+compose.yaml
+
+# Misc
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# Kiro and other tool configs
+.kiro
+.specify
+.iflow
