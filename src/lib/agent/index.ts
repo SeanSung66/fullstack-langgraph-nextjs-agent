@@ -1,5 +1,5 @@
 import { DEFAULT_SYSTEM_PROMPT as SYSTEM_PROMPT } from "./prompt";
-import { postgresCheckpointer } from "./memory";
+import { getPostgresCheckpointer } from "./memory";
 import type { DynamicTool, StructuredToolInterface } from "@langchain/core/tools";
 import {
   AgentConfigOptions,
@@ -9,6 +9,7 @@ import {
 } from "./util";
 import { getMCPTools } from "./mcp";
 import { AgentBuilder } from "./builder";
+
 let setupPromise: Promise<void> | null = null;
 
 /**
@@ -18,7 +19,8 @@ let setupPromise: Promise<void> | null = null;
  */
 async function setupOnce() {
   if (!setupPromise) {
-    setupPromise = postgresCheckpointer.setup().catch((err) => {
+    const checkpointer = getPostgresCheckpointer();
+    setupPromise = checkpointer.setup().catch((err) => {
       // Reset so a future call can retry if initial setup failed.
       setupPromise = null;
       console.error("Failed to setup postgres checkpointer:", err);
@@ -44,11 +46,12 @@ async function createAgent(cfg?: AgentConfigOptions) {
   const configTools = (cfg?.tools || []) as StructuredToolInterface[];
   const allTools = [...configTools, ...mcpTools] as DynamicTool[];
 
+  const checkpointer = getPostgresCheckpointer();
   const agent = new AgentBuilder({
     llm,
     tools: allTools,
     prompt: cfg?.systemPrompt || SYSTEM_PROMPT,
-    checkpointer: postgresCheckpointer,
+    checkpointer: checkpointer,
     approveAllTools: cfg?.approveAllTools || false,
   }).build();
 
@@ -67,5 +70,19 @@ export async function getAgent(cfg?: AgentConfigOptions) {
   return ensureAgent(cfg);
 }
 
-// Eagerly create a default agent at module load using env defaults.
-export const defaultAgent = await ensureAgent();
+// Lazy default agent - only created when first accessed at runtime
+let defaultAgentInstance: Awaited<ReturnType<typeof ensureAgent>> | null = null;
+
+export async function getDefaultAgent() {
+  if (!defaultAgentInstance) {
+    defaultAgentInstance = await ensureAgent();
+  }
+  return defaultAgentInstance;
+}
+
+// For backward compatibility - but prefer getDefaultAgent()
+export const defaultAgent = {
+  get instance() {
+    throw new Error("Use getDefaultAgent() instead of defaultAgent for lazy initialization");
+  },
+};

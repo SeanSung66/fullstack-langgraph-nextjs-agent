@@ -1,10 +1,7 @@
 import { BaseMessage } from "@langchain/core/messages";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import * as dotenv from "dotenv";
 
-if (process.env.NODE_ENV !== "test") {
-  dotenv.config();
-}
+let postgresCheckpointerInstance: PostgresSaver | null = null;
 
 /**
  * Creates a PostgresSaver instance using environment variables
@@ -18,15 +15,35 @@ export function createPostgresMemory(): PostgresSaver {
 }
 
 /**
+ * Get PostgresSaver instance (lazy initialization).
+ * This prevents build-time errors when DATABASE_URL is not set.
+ */
+export function getPostgresCheckpointer(): PostgresSaver {
+  if (postgresCheckpointerInstance) {
+    return postgresCheckpointerInstance;
+  }
+  postgresCheckpointerInstance = createPostgresMemory();
+  return postgresCheckpointerInstance;
+}
+
+/**
  * Retrieves the message history for a specific thread.
  * @param threadId - The ID of the thread to retrieve history for.
  * @returns An array of messages associated with the thread.
  */
 export const getHistory = async (threadId: string): Promise<BaseMessage[]> => {
-  const history = await postgresCheckpointer.get({
+  const checkpointer = getPostgresCheckpointer();
+  const history = await checkpointer.get({
     configurable: { thread_id: threadId },
   });
   return Array.isArray(history?.channel_values?.messages) ? history.channel_values.messages : [];
 };
 
-export const postgresCheckpointer = createPostgresMemory();
+/**
+ * @deprecated Use getPostgresCheckpointer() instead for lazy initialization
+ */
+export const postgresCheckpointer = {
+  get instance() {
+    return getPostgresCheckpointer();
+  },
+};
