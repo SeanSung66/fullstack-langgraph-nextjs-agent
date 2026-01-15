@@ -1,6 +1,6 @@
 import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
-import { s3Client, BUCKET_NAME } from "./s3-client";
+import { getS3Client, BUCKET_NAME } from "./s3-client";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 function sanitizeFilenameForHeader(filename: string): string | undefined {
@@ -65,7 +65,7 @@ export async function uploadFile(
     ...(contentDisposition && { ContentDisposition: contentDisposition }),
   });
 
-  await s3Client.send(command);
+  await getS3Client().send(command);
 
   // Return public URL (MinIO bucket is set to public download in compose.yaml)
   const endpoint = process.env.S3_ENDPOINT || "";
@@ -91,7 +91,7 @@ export async function uploadLargeFile(
     : undefined;
 
   const upload = new Upload({
-    client: s3Client,
+    client: getS3Client(),
     params: {
       Bucket: BUCKET_NAME,
       Key: key,
@@ -122,7 +122,7 @@ export async function getFile(key: string): Promise<Buffer> {
     Key: key,
   });
 
-  const response = await s3Client.send(command);
+  const response = await getS3Client().send(command);
 
   if (!response.Body) {
     throw new Error("File not found");
@@ -149,5 +149,5 @@ export async function getPresignedUrl(key: string, expiresIn = 3600): Promise<st
     Key: key,
   });
 
-  return await getSignedUrl(s3Client, command, { expiresIn });
+  return await getSignedUrl(getS3Client(), command, { expiresIn });
 }
